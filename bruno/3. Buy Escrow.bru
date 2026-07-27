@@ -1,0 +1,22 @@
+meta {
+  name: 3. Buy Escrow
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/api/v1/escrows/{{escrowId}}/buy
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "buyer_id": "acc_buyer_001",
+    "payment_notes": "Depositing $500.00 into escrow vault account on Universal Ledger"
+  }
+}
+
+docs {
+  **Buy / Fund Escrow**: Buyer transfers the escrow amount from Buyer Account -> Escrow Vault Account on Universal Ledger via an atomic Transfer client transaction. Updates status to FUNDED.
+}

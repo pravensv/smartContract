@@ -1,0 +1,42 @@
+meta {
+  name: test
+  type: http
+  seq: 10
+}
+
+post {
+  url: https://universalledger.googleapis.com/v1/projects/dark-window-503007-n2/locations/us-central1/endpoints/ul-endpoint-main:submitTransaction
+  body: json
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer 
+  Content-Type: application/json
+  x-goog-user-project: dark-window-503007-n2
+}
+
+body:json {
+  {
+    "endpoint": "projects/dark-window-503007-n2/locations/us-central1/endpoints/ul-endpoint-main",
+    "transaction": {
+      "clientTransaction": {
+        "senderId": "acc_buyer_001",
+        "sequenceNumber": 1,
+        "createAccountTransaction": {
+          "accountComment": "Buyer Account on GCUL",
+          "tokenManagerId": "1:TKN:GBP:42445hd66brJdaXfLkULnKdZYXVvzZjjpHqbqoCsHKoca",
+          "roles": [
+            "ROLE_PAYER",
+            "ROLE_RECEIVER"
+          ]
+        }
+      },
+      "signature": "sig_buyer_001"
+    }
+  }
+}
+
+settings {
+  encodeUrl: false
+}

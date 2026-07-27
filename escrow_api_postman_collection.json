@@ -1,0 +1,267 @@
+{
+  "info": {
+    "_postman_id": "a8e93d14-5b7c-4e89-8d12-9c3f01ab4567",
+    "name": "Google Cloud Universal Ledger Escrow API",
+    "description": "### Google Cloud Universal Ledger Escrow API Collection\n\nThis collection provides ready-to-use requests for managing multi-party **Escrow Lifecycles** (**Create Escrow**, **Buy / Fund**, **Hold**, **Sell / Release**, and **Refund**) backed by **Google Cloud Universal Ledger (`google.cloud.universalledger.v1`)**.\n\n### Workflow Steps:\n1. **Create Escrow**: Provision escrow terms & dedicated Vault Account on Universal Ledger.\n2. **Buy (Fund)**: Buyer transfers currency tokens into Vault Account.\n3. **Hold**: Put funds on hold / lock state during inspection or dispute.\n4. **Sell (Release)**: Release locked vault funds to Seller Account.\n5. **Refund**: Return vault funds back to Buyer Account.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8000",
+      "type": "string"
+    },
+    {
+      "key": "escrowId",
+      "value": "escrow_demo",
+      "type": "string"
+    },
+    {
+      "key": "txDigest",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Health Check",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/",
+          "host": ["{{baseUrl}}"],
+          "path": [""]
+        },
+        "description": "Check if the API server and Google Cloud Universal Ledger mock/live driver are active and healthy."
+      }
+    },
+    {
+      "name": "2. Escrow Operations",
+      "item": [
+        {
+          "name": "Create Escrow",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.escrow_id) {",
+                  "    pm.collectionVariables.set('escrowId', jsonData.escrow_id);",
+                  "    console.log('Saved escrowId:', jsonData.escrow_id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"buyer_id\": \"acc_buyer_001\",\n  \"seller_id\": \"acc_seller_001\",\n  \"arbiter_id\": \"acc_arbiter_001\",\n  \"amount\": 50000,\n  \"currency\": \"USD\",\n  \"title\": \"MacBook Pro M3 Purchase\",\n  \"description\": \"Escrow agreement for 16-inch MacBook Pro M3 Max\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/escrows",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "escrows"]
+            },
+            "description": "**Create Escrow**: Initializes a multi-party escrow agreement between a Buyer, Seller, and neutral Arbiter. Deploys an Escrow Vault Account on the Google Cloud Universal Ledger (`acc_vault_<id>`) to hold escrowed funds."
+          }
+        },
+        {
+          "name": "Buy / Fund Escrow",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.last_transaction_digest) {",
+                  "    pm.collectionVariables.set('txDigest', jsonData.last_transaction_digest);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"buyer_id\": \"acc_buyer_001\",\n  \"payment_notes\": \"Depositing $500.00 into escrow vault account on Universal Ledger\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/escrows/{{escrowId}}/buy",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "escrows", "{{escrowId}}", "buy"]
+            },
+            "description": "**Buy / Fund Escrow**: Buyer transfers the escrow amount from Buyer Account -> Escrow Vault Account on Universal Ledger via an atomic `Transfer` client transaction. Updates status to `FUNDED`."
+          }
+        },
+        {
+          "name": "Hold Escrow (Inspection Lock)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"requested_by\": \"acc_buyer_001\",\n  \"reason\": \"Inspection in progress. Testing hardware components and serial number.\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/escrows/{{escrowId}}/hold",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "escrows", "{{escrowId}}", "hold"]
+            },
+            "description": "**Hold Escrow**: Places escrow into a `HELD` state on the Universal Ledger during inspection or dispute freeze using contract method invocation (`InvokeContractMethod`). Prevents unilateral withdrawals."
+          }
+        },
+        {
+          "name": "Sell / Release Escrow to Seller",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"requested_by\": \"acc_buyer_001\",\n  \"settlement_notes\": \"Hardware passed inspection. Releasing $500.00 to seller account.\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/escrows/{{escrowId}}/sell",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "escrows", "{{escrowId}}", "sell"]
+            },
+            "description": "**Sell / Release Escrow**: Completes the sale by transferring funds directly from the Escrow Vault Account -> Seller Account on the Universal Ledger. Updates status to `RELEASED`."
+          }
+        },
+        {
+          "name": "Refund Escrow to Buyer",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"requested_by\": \"acc_arbiter_001\",\n  \"reason\": \"Item failed inspection check\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/escrows/{{escrowId}}/refund",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "escrows", "{{escrowId}}", "refund"]
+            },
+            "description": "**Refund Escrow**: Returns vault funds back to the Buyer Account on the Universal Ledger (`REFUNDED`). Authorized by Seller or Arbiter."
+          }
+        },
+        {
+          "name": "Get Escrow Details",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/escrows/{{escrowId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "escrows", "{{escrowId}}"]
+            },
+            "description": "Retrieves the current state, vault account ID, status, and full Universal Ledger audit event history for a specific escrow."
+          }
+        },
+        {
+          "name": "List All Escrows",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/escrows",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "escrows"]
+            },
+            "description": "Lists all created escrows and their current Universal Ledger statuses."
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Universal Ledger Low-Level Introspection",
+      "item": [
+        {
+          "name": "Query Buyer Account",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/ledger/accounts/acc_buyer_001",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "ledger", "accounts", "acc_buyer_001"]
+            },
+            "description": "**QueryAccount**: Calls Google Cloud Universal Ledger `QueryAccount` RPC to inspect Buyer sequence number, public key, consensus round ID, and currency balances."
+          }
+        },
+        {
+          "name": "Query Seller Account",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/ledger/accounts/acc_seller_001",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "ledger", "accounts", "acc_seller_001"]
+            },
+            "description": "**QueryAccount**: Inspects Seller account balance on the Universal Ledger after sale settlement."
+          }
+        },
+        {
+          "name": "Query Transaction State",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/ledger/transactions/{{txDigest}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "ledger", "transactions", "{{txDigest}}"]
+            },
+            "description": "**QueryTransactionState**: Calls Google Cloud Universal Ledger `QueryTransactionState` RPC to verify transaction status (`FINALIZED`) and consensus execution round certificates."
+          }
+        },
+        {
+          "name": "List Ledger Endpoints",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/ledger/endpoints",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "ledger", "endpoints"]
+            },
+            "description": "**ListEndpoints**: Queries regional Google Cloud Universal Ledger service endpoints."
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "version": "1",
+  "name": "Google Cloud Universal Ledger Escrow API",
+  "type": "collection",
+  "ignore": [
+    "node_modules",
+    ".git"
+  ]
+}

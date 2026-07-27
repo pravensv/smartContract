@@ -1,0 +1,27 @@
+meta {
+  name: 2. Create Escrow
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/v1/escrows
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "buyer_id": "acc_buyer_001",
+    "seller_id": "acc_seller_001",
+    "arbiter_id": "acc_arbiter_001",
+    "amount": 50000,
+    "currency": "USD",
+    "title": "chandu",
+    "description": "Escrow agreement for 16-inch MacBook Pro M3 Max"
+  }
+}
+
+docs {
+  **Create Escrow**: Initializes a multi-party escrow agreement between a Buyer, Seller, and neutral Arbiter. Deploys an Escrow Vault Account on the Google Cloud Universal Ledger (`acc_vault_<id>`) to hold escrowed funds.
+}

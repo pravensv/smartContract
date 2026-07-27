@@ -1,0 +1,15 @@
+meta {
+  name: 9. Query Transaction State
+  type: http
+  seq: 9
+}
+
+get {
+  url: {{baseUrl}}/api/v1/ledger/transactions/{{txDigest}}
+  body: none
+  auth: none
+}
+
+docs {
+  **QueryTransactionState**: Calls Google Cloud Universal Ledger QueryTransactionState RPC to verify transaction status (FINALIZED) and consensus execution round certificates.
+}
