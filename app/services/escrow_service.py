@@ -81,7 +81,7 @@ class EscrowService:
             status=EscrowStatus.CREATED,
             title=request.title,
             description=request.description or "",
-            return_period_days=request.return_period_days or 5,
+            return_period_seconds=request.return_period_seconds or 30,
             created_at=now,
             updated_at=now,
             last_transaction_digest=res.transaction_digest_hex,
@@ -185,7 +185,7 @@ class EscrowService:
             )
 
         now = time.time()
-        expires_at = now + (escrow.return_period_days * 86400)
+        expires_at = now + (escrow.return_period_seconds or 30)
 
         tx = ClientTransaction(
             sender_id=request.delivered_by,
@@ -266,10 +266,11 @@ class EscrowService:
             )
 
         now = time.time()
-        if escrow.return_window_expires_at and now > escrow.return_window_expires_at:
+        return_expires = escrow.return_window_expires_at or ((escrow.delivered_at or now) + (escrow.return_period_seconds or 30))
+        if now > return_expires:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"The {escrow.return_period_days}-day return period has expired. Return requests are no longer allowed."
+                detail=f"The {escrow.return_period_seconds or 30}-second return period has expired. Return requests are no longer allowed."
             )
 
         tx = ClientTransaction(
@@ -416,10 +417,12 @@ class EscrowService:
     def sell_escrow(self, escrow_id: str, request: SellEscrowRequest) -> EscrowResponse:
         escrow = self.get_escrow(escrow_id)
 
-        if escrow.status not in [EscrowStatus.FUNDED, EscrowStatus.DELIVERED, EscrowStatus.HELD]:
+        # 1. Status MUST be DELIVERED or HELD (for dispute resolution)
+        escrow_status_str = escrow.status.value if hasattr(escrow.status, 'value') else str(escrow.status)
+        if escrow.status not in [EscrowStatus.DELIVERED, EscrowStatus.HELD]:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Cannot release/sell escrow in '{escrow.status}' state."
+                detail=f"Cannot release/sell escrow in '{escrow_status_str}' state. Escrow status MUST be 'DELIVERED'."
             )
 
         valid_actors = {escrow.buyer_id, escrow.arbiter_id, escrow.seller_id}
@@ -430,16 +433,29 @@ class EscrowService:
             )
 
         now = time.time()
+        is_buyer_or_arbiter = request.requested_by in {escrow.buyer_id, escrow.arbiter_id}
 
-        # Enforce 5-Day Return Window Rule:
-        # Merchant/Seller CANNOT release money while inside the 5-day return period unless Buyer approves.
-        if escrow.status == EscrowStatus.DELIVERED and request.requested_by == escrow.seller_id:
-            if escrow.return_window_expires_at and now < escrow.return_window_expires_at:
-                days_left = round((escrow.return_window_expires_at - now) / 86400, 2)
+        # 2. If DELIVERED, Delivery Time & 30-Second Return Window MUST be checked
+        if escrow.status == EscrowStatus.DELIVERED:
+            return_sec = escrow.return_period_seconds if hasattr(escrow, "return_period_seconds") and escrow.return_period_seconds else 30
+            return_expires = escrow.return_window_expires_at
+            if not return_expires:
+                delivered_time = escrow.delivered_at or now
+                return_expires = delivered_time + return_sec
+
+            if now < return_expires and not is_buyer_or_arbiter:
+                secs_left = round(return_expires - now, 1)
+                if secs_left <= 0:
+                    secs_left = float(return_sec)
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Money is held during the 5-day return window. Merchant cannot claim funds for {days_left} more days unless buyer approves early."
+                    detail=f"Money is held during the {return_sec}-second return window. Escrow funds cannot be released until the return period expires ({secs_left} seconds remaining). Use /accept-early to waive return window."
                 )
+        elif escrow.status == EscrowStatus.HELD and not is_buyer_or_arbiter:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Rule Violation: Cannot release held funds without Buyer or Arbiter authorization."
+            )
 
         tx = ClientTransaction(
             sender_id=escrow.vault_account_id,

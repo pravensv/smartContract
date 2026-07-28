@@ -33,7 +33,7 @@ def create_escrow(
     print(f"   Buyer        : {request.buyer_id}")
     print(f"   Seller       : {request.seller_id}")
     print(f"   Amount       : {request.amount} {request.currency}")
-    print(f"   Return Period: {request.return_period_days} Days")
+    print(f"   Return Period: {getattr(request, 'return_period_seconds', 30)} Seconds")
     print("="*80)
     return service.create_escrow(request)
 

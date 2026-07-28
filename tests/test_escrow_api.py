@@ -72,6 +72,12 @@ def test_full_escrow_lifecycle_create_buy_hold_sell():
     vault_bal = res_vault_acc.json()["account"]["currency_balances"].get("GBP", res_vault_acc.json()["account"]["currency_balances"].get("USD", 0))
     assert vault_bal == 100000
 
+    # 2.5 Deliver Escrow
+    client.post(f"/api/v1/escrows/{escrow_id}/deliver", json={
+        "delivered_by": "acc_courier_001",
+        "tracking_number": "TRK-WATCH-001"
+    })
+
     # 3. Hold Escrow (Inspection Phase)
     hold_payload = {
         "requested_by": "acc_buyer_001",
@@ -83,7 +89,7 @@ def test_full_escrow_lifecycle_create_buy_hold_sell():
     assert escrow_held["status"] == "HELD"
     assert escrow_held["hold_reason"] == "Authenticating serial number with watchmaker"
 
-    # 4. Sell / Release Escrow to Seller
+    # 4. Accept Early / Release Escrow to Seller
     res_seller_acc_before = client.get(f"/api/v1/ledger/accounts/{escrow['seller_id']}")
     seller_bal_before = res_seller_acc_before.json()["account"]["currency_balances"].get("GBP", res_seller_acc_before.json()["account"]["currency_balances"].get("USD", 0))
 
@@ -129,13 +135,13 @@ def test_delivery_and_5_day_return_window():
     assert delivered_data["delivery_tracking_info"] == "TRK-889922"
     assert delivered_data["return_window_expires_at"] is not None
 
-    # 3. Merchant attempts to claim release during 5-day return window -> MUST FAIL
+    # 3. Merchant attempts to claim release during 30-second return window -> MUST FAIL
     merchant_sell_res = client.post(f"/api/v1/escrows/{escrow_id}/sell", json={
         "requested_by": "acc_seller_001",
         "settlement_notes": "Claiming money early"
     })
     assert merchant_sell_res.status_code == 400
-    assert "held during the 5-day return window" in merchant_sell_res.json()["detail"]
+    assert "30-second return window" in merchant_sell_res.json()["detail"]
 
     # 4. Buyer accepts delivery early -> Funds released to seller
     buyer_accept_res = client.post(f"/api/v1/escrows/{escrow_id}/accept-early", json={
@@ -172,6 +178,24 @@ def test_cannot_sell_before_funding():
         "requested_by": "acc_buyer_001"
     })
     assert res.status_code == 400
+
+def test_cannot_sell_in_funded_state_before_delivery():
+    create_res = client.post("/api/v1/escrows", json={
+        "buyer_id": "acc_buyer_001",
+        "seller_id": "acc_seller_001",
+        "amount": 20000,
+        "title": "Camera Escrow"
+    })
+    escrow_id = create_res.json()["escrow_id"]
+    client.post(f"/api/v1/escrows/{escrow_id}/buy", json={"buyer_id": "acc_buyer_001"})
+
+    # Attempting to call sell while in FUNDED state (before delivery) must fail
+    res = client.post(f"/api/v1/escrows/{escrow_id}/sell", json={
+        "requested_by": "acc_buyer_001"
+    })
+    assert res.status_code == 400
+    assert "MUST be 'DELIVERED'" in res.json()["detail"]
+
 
 def test_refund_flow():
     c_res = client.post("/api/v1/escrows", json={

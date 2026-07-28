@@ -1,0 +1,26 @@
+meta {
+  name: 8c. Sell Claim (Blocked if NOT DELIVERED)
+  type: http
+  seq: 10
+}
+
+post {
+  url: {{baseUrl}}/api/v1/escrows/{{escrowId}}/sell
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "requested_by": "acc_seller_001",
+    "settlement_notes": "Attempting sell while escrow is in FUNDED state"
+  }
+}
+
+docs {
+  **Sell Claim Blocked Test**: Attempts to call `POST /sell` on an escrow that is in `FUNDED` or `CREATED` state (not yet marked `DELIVERED`).
+  
+  **Expected Result**:
+  - `HTTP 400 Bad Request`
+  - Error Detail: *"Cannot release/sell escrow in 'FUNDED' state. Escrow MUST be marked 'DELIVERED' before funds can be released to the seller."*
+}

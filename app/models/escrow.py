@@ -19,7 +19,8 @@ class CreateEscrowRequest(BaseModel):
     currency: str = Field("USD", description="3-letter currency code (ISO 4217)")
     title: str = Field(..., description="Title of item or agreement", json_schema_extra={"example": "MacBook Pro Purchase Escrow"})
     description: Optional[str] = Field("", description="Additional terms or contract details")
-    return_period_days: int = Field(5, description="Return period window in days (default 5 days)")
+    return_period_seconds: int = Field(30, description="Return period window in seconds (default 30 seconds)")
+    return_period_days: Optional[int] = Field(None, description="Optional return period window in days")
 
 class BuyEscrowRequest(BaseModel):
     buyer_id: str = Field(..., description="Ledger account ID of the buyer funding the escrow")
@@ -71,7 +72,8 @@ class EscrowResponse(BaseModel):
     created_at: float
     updated_at: float
     delivered_at: Optional[float] = None
-    return_period_days: int = 5
+    return_period_seconds: int = 30
+    return_period_days: Optional[int] = None
     return_window_expires_at: Optional[float] = None
     delivery_tracking_info: Optional[str] = None
     hold_reason: Optional[str] = None

@@ -1,5 +1,5 @@
 meta {
-  name: 8. Sell Escrow
+  name: 8. Sell Escrow (After 30-Second Window Expires)
   type: http
   seq: 8
 }
@@ -12,11 +12,17 @@ post {
 
 body:json {
   {
-    "requested_by": "acc_buyer_001",
-    "settlement_notes": "Inspection passed. Releasing funds to merchant/seller."
+    "requested_by": "acc_seller_001",
+    "settlement_notes": "30-second return window elapsed. Releasing funds from vault to merchant/seller."
   }
 }
 
 docs {
-  **Sell Escrow**: Releases vault funds to the Merchant/Seller. Note: Merchant cannot claim funds during the 5-day return window unless Buyer approves early.
+  **Sell Escrow**: Releases vault funds to the Merchant/Seller.
+  
+  **Mandatory Rules**:
+  1. Escrow Status MUST be `DELIVERED`. (Returns `HTTP 400 Bad Request` if in `CREATED`, `FUNDED`, `HELD`, or any other state).
+  2. Delivery Time / 30-Second Return Window MUST be checked. If 30 seconds have not passed, returns `HTTP 400 Bad Request`.
+  3. To release funds early during the 30-second return window, use `POST /api/v1/escrows/{id}/accept-early`.
 }
+

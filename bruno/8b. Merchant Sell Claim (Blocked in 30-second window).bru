@@ -1,0 +1,26 @@
+meta {
+  name: 8b. Merchant Sell Claim (Blocked in 30-second window)
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{baseUrl}}/api/v1/escrows/{{escrowId}}/sell
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "requested_by": "acc_seller_001",
+    "settlement_notes": "Merchant attempting to claim funds during 30-second return window"
+  }
+}
+
+docs {
+  **Merchant Sell Claim Test**: Merchant (`acc_seller_001`) attempts to claim funds while the product is in `DELIVERED` status and inside the 30-second return window.
+  
+  **Expected Result**:
+  - `HTTP 400 Bad Request`
+  - Error Detail: *"Money is held during the 30-second return window. Escrow funds cannot be released until the return period expires (X seconds remaining). Use /accept-early to waive return window."*
+}

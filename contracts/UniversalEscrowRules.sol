@@ -38,7 +38,7 @@ contract UniversalEscrowRules {
     string public title;
     
     // --- Return Period Settings ---
-    uint256 public constant DEFAULT_RETURN_PERIOD = 5 days; // 5 days (432,000 seconds)
+    uint256 public constant DEFAULT_RETURN_PERIOD = 30 seconds; // 30 seconds for quick testing & demos
     uint256 public returnPeriodDuration; // Configurable return window duration in seconds
     uint256 public deliveredAt;           // Timestamp when product delivery was confirmed
     string public deliveryTrackingInfo;   // Carrier/tracking reference for product delivery
