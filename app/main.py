@@ -46,6 +46,8 @@ def create_app() -> FastAPI:
     app.include_router(ledger_router)
 
     @app.get("/", tags=["Health"])
+    @app.get("/health", tags=["Health"])
+    @app.get("/healthz", tags=["Health"])
     def root():
         return {
             "app": settings.APP_NAME,
