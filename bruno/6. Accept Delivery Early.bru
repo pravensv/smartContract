@@ -1,0 +1,22 @@
+meta {
+  name: 6. Accept Delivery Early
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/api/v1/escrows/{{escrowId}}/accept-early
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "buyer_id": "acc_buyer_001",
+    "notes": "Verified product in perfect working condition. Waiving remaining 5-day return period."
+  }
+}
+
+docs {
+  **Accept Delivery Early**: Buyer waives remaining 5-day return period and authorizes immediate payout to the Merchant/Seller.
+}

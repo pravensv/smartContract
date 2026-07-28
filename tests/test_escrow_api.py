@@ -105,8 +105,47 @@ def test_full_escrow_lifecycle_create_buy_hold_sell():
     res_vault_final = client.get(f"/api/v1/ledger/accounts/{vault_id}")
     assert res_vault_final.json()["account"]["currency_balances"].get("GBP", res_vault_final.json()["account"]["currency_balances"].get("USD", 0)) == 0
 
+def test_delivery_and_5_day_return_window():
+    # 1. Create and Fund Escrow
+    create_res = client.post("/api/v1/escrows", json={
+        "buyer_id": "acc_buyer_001",
+        "seller_id": "acc_seller_001",
+        "amount": 40000,
+        "title": "Smartphone Purchase",
+        "return_period_days": 5
+    })
+    escrow_id = create_res.json()["escrow_id"]
+    client.post(f"/api/v1/escrows/{escrow_id}/buy", json={"buyer_id": "acc_buyer_001"})
+
+    # 2. Delivery Boy / Courier marks product as Delivered
+    deliver_res = client.post(f"/api/v1/escrows/{escrow_id}/deliver", json={
+        "delivered_by": "acc_courier_001",
+        "tracking_number": "TRK-889922",
+        "delivery_notes": "Handed to recipient at front door"
+    })
+    assert deliver_res.status_code == 200
+    delivered_data = deliver_res.json()
+    assert delivered_data["status"] == "DELIVERED"
+    assert delivered_data["delivery_tracking_info"] == "TRK-889922"
+    assert delivered_data["return_window_expires_at"] is not None
+
+    # 3. Merchant attempts to claim release during 5-day return window -> MUST FAIL
+    merchant_sell_res = client.post(f"/api/v1/escrows/{escrow_id}/sell", json={
+        "requested_by": "acc_seller_001",
+        "settlement_notes": "Claiming money early"
+    })
+    assert merchant_sell_res.status_code == 400
+    assert "held during the 5-day return window" in merchant_sell_res.json()["detail"]
+
+    # 4. Buyer accepts delivery early -> Funds released to seller
+    buyer_accept_res = client.post(f"/api/v1/escrows/{escrow_id}/accept-early", json={
+        "buyer_id": "acc_buyer_001",
+        "notes": "Product checked and working great!"
+    })
+    assert buyer_accept_res.status_code == 200
+    assert buyer_accept_res.json()["status"] == "RELEASED"
+
 def test_invalid_buyer_cannot_fund():
-    # Create escrow
     create_res = client.post("/api/v1/escrows", json={
         "buyer_id": "acc_buyer_001",
         "seller_id": "acc_seller_001",
@@ -115,7 +154,6 @@ def test_invalid_buyer_cannot_fund():
     })
     escrow_id = create_res.json()["escrow_id"]
 
-    # Attempt buy funding with wrong account
     res = client.post(f"/api/v1/escrows/{escrow_id}/buy", json={
         "buyer_id": "acc_random_person"
     })
@@ -130,14 +168,12 @@ def test_cannot_sell_before_funding():
     })
     escrow_id = create_res.json()["escrow_id"]
 
-    # Try selling unfunded escrow
     res = client.post(f"/api/v1/escrows/{escrow_id}/sell", json={
         "requested_by": "acc_buyer_001"
     })
     assert res.status_code == 400
 
 def test_refund_flow():
-    # Create & Fund
     c_res = client.post("/api/v1/escrows", json={
         "buyer_id": "acc_buyer_001",
         "seller_id": "acc_seller_001",
@@ -148,7 +184,6 @@ def test_refund_flow():
     escrow_id = c_res.json()["escrow_id"]
     client.post(f"/api/v1/escrows/{escrow_id}/buy", json={"buyer_id": "acc_buyer_001"})
 
-    # Arbiter triggers refund
     refund_res = client.post(f"/api/v1/escrows/{escrow_id}/refund", json={
         "requested_by": "acc_arbiter_001",
         "reason": "Item failed inspection"

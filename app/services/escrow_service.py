@@ -10,8 +10,9 @@ from app.ledger.schemas import (
     SubmitTransactionRequest, Transfer
 )
 from app.models.escrow import (
-    BuyEscrowRequest, CreateEscrowRequest, EscrowResponse, EscrowStatus,
-    HoldEscrowRequest, LedgerEventLog, RefundEscrowRequest, SellEscrowRequest
+    AcceptDeliveryEarlyRequest, BuyEscrowRequest, CreateEscrowRequest,
+    DeliverEscrowRequest, EscrowResponse, EscrowStatus, HoldEscrowRequest,
+    LedgerEventLog, RefundEscrowRequest, RequestReturnRequest, SellEscrowRequest
 )
 
 class EscrowService:
@@ -48,7 +49,8 @@ class EscrowService:
                     "arbiter_id": request.arbiter_id,
                     "amount": request.amount,
                     "currency": request.currency,
-                    "title": request.title
+                    "title": request.title,
+                    "return_period_days": request.return_period_days
                 }
             )
         )
@@ -79,6 +81,7 @@ class EscrowService:
             status=EscrowStatus.CREATED,
             title=request.title,
             description=request.description or "",
+            return_period_days=request.return_period_days or 5,
             created_at=now,
             updated_at=now,
             last_transaction_digest=res.transaction_digest_hex,
@@ -165,6 +168,183 @@ class EscrowService:
 
         return escrow
 
+    def deliver_escrow(self, escrow_id: str, request: DeliverEscrowRequest) -> EscrowResponse:
+        escrow = self.get_escrow(escrow_id)
+
+        if escrow.status != EscrowStatus.FUNDED:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Cannot mark escrow as delivered in '{escrow.status}' state. Must be in 'FUNDED' state."
+            )
+
+        valid_actors = {escrow.seller_id, escrow.buyer_id, escrow.arbiter_id, request.delivered_by}
+        if request.delivered_by not in valid_actors:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Account '{request.delivered_by}' is not authorized to update delivery status."
+            )
+
+        now = time.time()
+        expires_at = now + (escrow.return_period_days * 86400)
+
+        tx = ClientTransaction(
+            sender_id=request.delivered_by,
+            sequence_number=3,
+            chained_unit=False,
+            invoke_contract_method_transaction=InvokeContractMethod(
+                contract_id=escrow.vault_account_id,
+                method_name="mark_delivered",
+                method_arguments={
+                    "delivered_by": request.delivered_by,
+                    "tracking_number": request.tracking_number or "",
+                    "delivered_at": now,
+                    "return_expires_at": expires_at
+                }
+            )
+        )
+
+        res = self.ledger_client.submit_transaction(
+            SubmitTransactionRequest(
+                endpoint=self.ledger_client.endpoint_name,
+                transaction=SignedTransaction(
+                    client_transaction=tx,
+                    signature=f"sig_deliver_{request.delivered_by}"
+                )
+            )
+        )
+
+        event_log = LedgerEventLog(
+            action="PRODUCT_DELIVERED",
+            transaction_digest_hex=res.transaction_digest_hex,
+            round_id=res.certificate.round_id if res.certificate else 102,
+            timestamp=now,
+            details={
+                "delivered_by": request.delivered_by,
+                "tracking_number": request.tracking_number or "N/A",
+                "notes": request.delivery_notes or "",
+                "return_expires_at": str(expires_at)
+            }
+        )
+
+        escrow.status = EscrowStatus.DELIVERED
+        escrow.delivered_at = now
+        escrow.return_window_expires_at = expires_at
+        escrow.delivery_tracking_info = request.tracking_number
+        escrow.updated_at = now
+        escrow.last_transaction_digest = res.transaction_digest_hex
+        escrow.ledger_round_id = res.certificate.round_id if res.certificate else escrow.ledger_round_id
+        escrow.ledger_history.append(event_log)
+
+        # Emit GCP Cloud Log
+        log_escrow_event(
+            action="PRODUCT_DELIVERED",
+            title=escrow.title,
+            escrow_id=escrow_id,
+            status="DELIVERED",
+            details={
+                "delivered_by": request.delivered_by,
+                "tracking": request.tracking_number,
+                "return_window_days": escrow.return_period_days
+            }
+        )
+
+        return escrow
+
+    def request_return(self, escrow_id: str, request: RequestReturnRequest) -> EscrowResponse:
+        escrow = self.get_escrow(escrow_id)
+
+        if escrow.status != EscrowStatus.DELIVERED:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Cannot request product return in '{escrow.status}' state. Must be in 'DELIVERED' state."
+            )
+
+        if request.buyer_id != escrow.buyer_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Only designated buyer '{escrow.buyer_id}' can request a return."
+            )
+
+        now = time.time()
+        if escrow.return_window_expires_at and now > escrow.return_window_expires_at:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"The {escrow.return_period_days}-day return period has expired. Return requests are no longer allowed."
+            )
+
+        tx = ClientTransaction(
+            sender_id=request.buyer_id,
+            sequence_number=4,
+            chained_unit=False,
+            invoke_contract_method_transaction=InvokeContractMethod(
+                contract_id=escrow.vault_account_id,
+                method_name="request_return",
+                method_arguments={
+                    "buyer_id": request.buyer_id,
+                    "reason": request.reason
+                }
+            )
+        )
+
+        res = self.ledger_client.submit_transaction(
+            SubmitTransactionRequest(
+                endpoint=self.ledger_client.endpoint_name,
+                transaction=SignedTransaction(
+                    client_transaction=tx,
+                    signature=f"sig_return_{request.buyer_id}"
+                )
+            )
+        )
+
+        event_log = LedgerEventLog(
+            action="RETURN_REQUESTED",
+            transaction_digest_hex=res.transaction_digest_hex,
+            round_id=res.certificate.round_id if res.certificate else 103,
+            timestamp=now,
+            details={"buyer_id": request.buyer_id, "reason": request.reason}
+        )
+
+        escrow.status = EscrowStatus.HELD
+        escrow.hold_reason = f"Return Requested: {request.reason}"
+        escrow.updated_at = now
+        escrow.last_transaction_digest = res.transaction_digest_hex
+        escrow.ledger_round_id = res.certificate.round_id if res.certificate else escrow.ledger_round_id
+        escrow.ledger_history.append(event_log)
+
+        log_escrow_event(
+            action="RETURN_REQUESTED",
+            title=escrow.title,
+            escrow_id=escrow_id,
+            status="HELD",
+            details={"buyer_id": request.buyer_id, "reason": request.reason}
+        )
+
+        return escrow
+
+    def accept_delivery_early(self, escrow_id: str, request: AcceptDeliveryEarlyRequest) -> EscrowResponse:
+        escrow = self.get_escrow(escrow_id)
+
+        if escrow.status != EscrowStatus.DELIVERED:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Cannot accept delivery early in '{escrow.status}' state. Must be 'DELIVERED'."
+            )
+
+        if request.buyer_id != escrow.buyer_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Only designated buyer '{escrow.buyer_id}' can accept delivery early."
+            )
+
+        # Trigger sell release
+        return self.sell_escrow(
+            escrow_id,
+            SellEscrowRequest(
+                requested_by=request.buyer_id,
+                settlement_notes=request.notes or "Buyer accepted delivery early (waived return period)"
+            )
+        )
+
     def hold_escrow(self, escrow_id: str, request: HoldEscrowRequest) -> EscrowResponse:
         escrow = self.get_escrow(escrow_id)
 
@@ -175,7 +355,7 @@ class EscrowService:
                 detail=f"Account '{request.requested_by}' is not authorized to hold this escrow."
             )
 
-        if escrow.status not in [EscrowStatus.FUNDED, EscrowStatus.CREATED]:
+        if escrow.status not in [EscrowStatus.FUNDED, EscrowStatus.CREATED, EscrowStatus.DELIVERED]:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Cannot put escrow on hold from '{escrow.status}' state."
@@ -185,7 +365,7 @@ class EscrowService:
 
         tx = ClientTransaction(
             sender_id=request.requested_by,
-            sequence_number=3,
+            sequence_number=5,
             chained_unit=False,
             invoke_contract_method_transaction=InvokeContractMethod(
                 contract_id=escrow.vault_account_id,
@@ -211,7 +391,7 @@ class EscrowService:
         event_log = LedgerEventLog(
             action="HOLD_LOCKED",
             transaction_digest_hex=res.transaction_digest_hex,
-            round_id=res.certificate.round_id if res.certificate else 102,
+            round_id=res.certificate.round_id if res.certificate else 104,
             timestamp=now,
             details={"requested_by": request.requested_by, "reason": request.reason}
         )
@@ -223,7 +403,6 @@ class EscrowService:
         escrow.ledger_round_id = res.certificate.round_id if res.certificate else escrow.ledger_round_id
         escrow.ledger_history.append(event_log)
 
-        # Emit GCP Cloud Log
         log_escrow_event(
             action="HOLD_LOCKED",
             title=escrow.title,
@@ -237,10 +416,10 @@ class EscrowService:
     def sell_escrow(self, escrow_id: str, request: SellEscrowRequest) -> EscrowResponse:
         escrow = self.get_escrow(escrow_id)
 
-        if escrow.status not in [EscrowStatus.FUNDED, EscrowStatus.HELD]:
+        if escrow.status not in [EscrowStatus.FUNDED, EscrowStatus.DELIVERED, EscrowStatus.HELD]:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Cannot release/sell escrow in '{escrow.status}' state. Must be 'FUNDED' or 'HELD'."
+                detail=f"Cannot release/sell escrow in '{escrow.status}' state."
             )
 
         valid_actors = {escrow.buyer_id, escrow.arbiter_id, escrow.seller_id}
@@ -252,9 +431,19 @@ class EscrowService:
 
         now = time.time()
 
+        # Enforce 5-Day Return Window Rule:
+        # Merchant/Seller CANNOT release money while inside the 5-day return period unless Buyer approves.
+        if escrow.status == EscrowStatus.DELIVERED and request.requested_by == escrow.seller_id:
+            if escrow.return_window_expires_at and now < escrow.return_window_expires_at:
+                days_left = round((escrow.return_window_expires_at - now) / 86400, 2)
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Money is held during the 5-day return window. Merchant cannot claim funds for {days_left} more days unless buyer approves early."
+                )
+
         tx = ClientTransaction(
             sender_id=escrow.vault_account_id,
-            sequence_number=4,
+            sequence_number=6,
             chained_unit=False,
             other_signatory_ids=[request.requested_by],
             transfer_transaction=Transfer(
@@ -281,7 +470,7 @@ class EscrowService:
         event_log = LedgerEventLog(
             action="SELL_RELEASED",
             transaction_digest_hex=res.transaction_digest_hex,
-            round_id=res.certificate.round_id if res.certificate else 103,
+            round_id=res.certificate.round_id if res.certificate else 105,
             timestamp=now,
             details={
                 "requested_by": request.requested_by,
@@ -298,7 +487,6 @@ class EscrowService:
         escrow.ledger_round_id = res.certificate.round_id if res.certificate else escrow.ledger_round_id
         escrow.ledger_history.append(event_log)
 
-        # Emit GCP Cloud Log
         log_escrow_event(
             action="SELL_RELEASED",
             title=escrow.title,
@@ -312,7 +500,7 @@ class EscrowService:
     def refund_escrow(self, escrow_id: str, request: RefundEscrowRequest) -> EscrowResponse:
         escrow = self.get_escrow(escrow_id)
 
-        if escrow.status not in [EscrowStatus.FUNDED, EscrowStatus.HELD, EscrowStatus.DISPUTED]:
+        if escrow.status not in [EscrowStatus.FUNDED, EscrowStatus.DELIVERED, EscrowStatus.HELD, EscrowStatus.DISPUTED]:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Cannot refund escrow in '{escrow.status}' state."
@@ -329,7 +517,7 @@ class EscrowService:
 
         tx = ClientTransaction(
             sender_id=escrow.vault_account_id,
-            sequence_number=5,
+            sequence_number=7,
             chained_unit=False,
             other_signatory_ids=[request.requested_by],
             transfer_transaction=Transfer(
@@ -356,7 +544,7 @@ class EscrowService:
         event_log = LedgerEventLog(
             action="REFUNDED",
             transaction_digest_hex=res.transaction_digest_hex,
-            round_id=res.certificate.round_id if res.certificate else 104,
+            round_id=res.certificate.round_id if res.certificate else 106,
             timestamp=now,
             details={"requested_by": request.requested_by, "reason": request.reason}
         )
@@ -368,7 +556,6 @@ class EscrowService:
         escrow.ledger_round_id = res.certificate.round_id if res.certificate else escrow.ledger_round_id
         escrow.ledger_history.append(event_log)
 
-        # Emit GCP Cloud Log
         log_escrow_event(
             action="REFUNDED",
             title=escrow.title,

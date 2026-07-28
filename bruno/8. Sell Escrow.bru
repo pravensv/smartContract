@@ -1,0 +1,22 @@
+meta {
+  name: 8. Sell Escrow
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/api/v1/escrows/{{escrowId}}/sell
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "requested_by": "acc_buyer_001",
+    "settlement_notes": "Inspection passed. Releasing funds to merchant/seller."
+  }
+}
+
+docs {
+  **Sell Escrow**: Releases vault funds to the Merchant/Seller. Note: Merchant cannot claim funds during the 5-day return window unless Buyer approves early.
+}

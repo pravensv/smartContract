@@ -1,0 +1,22 @@
+meta {
+  name: 7. Hold Escrow
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/api/v1/escrows/{{escrowId}}/hold
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "requested_by": "acc_buyer_001",
+    "reason": "Authenticating serial number and running hardware diagnostics"
+  }
+}
+
+docs {
+  **Hold Escrow**: Freezes escrow funds on hold during inspection or dispute resolution. Updates state to `HELD` on Google Cloud Universal Ledger.
+}

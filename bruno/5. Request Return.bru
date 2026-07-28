@@ -1,0 +1,22 @@
+meta {
+  name: 5. Request Return
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/api/v1/escrows/{{escrowId}}/request-return
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "buyer_id": "acc_buyer_001",
+    "reason": "Defective product or item damaged in transit"
+  }
+}
+
+docs {
+  **Request Return**: Buyer requests product return within the 5-day return window. Locks escrow state to `HELD` on Google Cloud Universal Ledger.
+}
