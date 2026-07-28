@@ -2,9 +2,10 @@
 FROM python:3.11-slim
 
 # Prevent Python from writing .pyc files & buffer stdout/stderr
+# Set default PORT to 8080 (Cloud Run's default port)
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PORT=8000
+    PORT=8080
 
 # Set working directory inside container
 WORKDIR /app
@@ -26,8 +27,8 @@ COPY app/ ./app/
 COPY contracts/ ./contracts/
 COPY .env .env
 
-# Expose port
-EXPOSE 8000
+# Expose port 8080
+EXPOSE 8080
 
-# Run uvicorn server for Cloud Run / Container execution
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Run uvicorn server binding dynamically to $PORT (defaults to 8080)
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT}"]
