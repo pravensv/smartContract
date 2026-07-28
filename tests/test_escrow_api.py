@@ -1,4 +1,5 @@
 import pytest
+import time
 from fastapi.testclient import TestClient
 from app.main import app
 
@@ -150,6 +151,35 @@ def test_delivery_and_5_day_return_window():
     })
     assert buyer_accept_res.status_code == 200
     assert buyer_accept_res.json()["status"] == "RELEASED"
+
+def test_delivered_escrow_auto_releases_after_return_window():
+    create_res = client.post("/api/v1/escrows", json={
+        "buyer_id": "acc_buyer_001",
+        "seller_id": "acc_seller_001",
+        "amount": 25000,
+        "title": "Auto release after delivery",
+        "return_period_seconds": 1
+    })
+    escrow_id = create_res.json()["escrow_id"]
+    client.post(f"/api/v1/escrows/{escrow_id}/buy", json={"buyer_id": "acc_buyer_001"})
+
+    deliver_res = client.post(f"/api/v1/escrows/{escrow_id}/deliver", json={
+        "delivered_by": "acc_courier_001",
+        "tracking_number": "TRK-AUTO-001"
+    })
+    assert deliver_res.status_code == 200
+    assert deliver_res.json()["status"] == "DELIVERED"
+
+    released = None
+    for _ in range(20):
+        time.sleep(0.2)
+        released = client.get(f"/api/v1/escrows/{escrow_id}").json()
+        if released["status"] == "RELEASED":
+            break
+
+    assert released["status"] == "RELEASED"
+    assert released["ledger_history"][-1]["action"] == "SELL_RELEASED"
+    assert released["ledger_history"][-1]["details"]["requested_by"] == "acc_arbiter_001"
 
 def test_invalid_buyer_cannot_fund():
     create_res = client.post("/api/v1/escrows", json={

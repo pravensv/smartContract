@@ -1,6 +1,6 @@
 # Google Cloud Universal Ledger Escrow API
 
-Enterprise RESTful API service built with FastAPI and integrated with Google Cloud Universal Ledger (`google.cloud.universalledger.v1`). Enables secure multi-party Escrow transactions featuring **Create Escrow**, **Buy (Fund)**, **Hold (Freeze/Inspect)**, and **Sell (Release/Settle)** operations.
+Enterprise RESTful API service built with FastAPI and integrated with Google Cloud Universal Ledger (`google.cloud.universalledger.v1`). Enables secure multi-party Escrow transactions featuring **Create Escrow**, **Buy (Fund)**, **Deliver**, **Return/Hold**, and **Sell or Auto-Release** operations.
 
 ---
 
@@ -9,8 +9,10 @@ Enterprise RESTful API service built with FastAPI and integrated with Google Clo
 1. **Complete Escrow Lifecycle**:
    - **Create Escrow**: Initializes contract terms, assigns buyer/seller/arbiter accounts, and registers an Escrow Vault Account on Google Cloud Universal Ledger.
    - **Buy (Fund)**: Buyer transfers currency tokens into the Escrow Vault on Universal Ledger using atomic `Transfer` transactions.
-   - **Hold**: Locks escrow during inspection, verification, or dispute using Universal Ledger contract state updates (`InvokeContractMethod`).
-   - **Sell (Release)**: Releases locked vault funds directly to the Seller account on Universal Ledger (`Transfer`).
+   - **Deliver**: Marks the product as delivered and starts the 30-second return window.
+   - **Auto-Release**: If escrow remains `DELIVERED` after the return window completes, funds are automatically released to the Seller.
+   - **Hold**: Locks escrow during inspection, return, verification, or dispute using Universal Ledger contract state updates (`InvokeContractMethod`).
+   - **Sell (Release)**: Releases vault funds directly to the Seller account on Universal Ledger (`Transfer`).
    - **Refund**: Resolves disputes by returning vault funds back to the Buyer.
 
 2. **Google Cloud Universal Ledger (`google.cloud.universalledger.v1`) Integration**:
@@ -57,6 +59,9 @@ Enterprise RESTful API service built with FastAPI and integrated with Google Clo
 | `GET` | `/api/v1/escrows` | List all escrows and their statuses |
 | `GET` | `/api/v1/escrows/{escrow_id}` | Get detailed Escrow state and ledger audit history |
 | `POST` | `/api/v1/escrows/{escrow_id}/buy` | **Buy / Fund Escrow**: Buyer transfers funds to Escrow Vault |
+| `POST` | `/api/v1/escrows/{escrow_id}/deliver` | **Deliver Escrow**: Mark product delivered and start the return window |
+| `POST` | `/api/v1/escrows/{escrow_id}/request-return` | **Request Return**: Buyer requests return during the active return window |
+| `POST` | `/api/v1/escrows/{escrow_id}/accept-early` | **Accept Early**: Buyer waives the remaining return window and releases funds |
 | `POST` | `/api/v1/escrows/{escrow_id}/hold` | **Hold Escrow**: Lock escrow state during inspection |
 | `POST` | `/api/v1/escrows/{escrow_id}/sell` | **Sell / Release**: Complete sale by transferring funds to Seller |
 | `POST` | `/api/v1/escrows/{escrow_id}/refund` | Refund vault funds to Buyer |
@@ -69,15 +74,20 @@ Enterprise RESTful API service built with FastAPI and integrated with Google Clo
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **Create Escrow** | `POST /api/v1/escrows` | *None* (Initialization) | `CREATED` | Any Client Caller | • `amount > 0`<br>• Assigns `buyer_id`, `seller_id`, and `arbiter_id`<br>• Registers Escrow Vault Account (`acc_vault_<id>`) on Universal Ledger |
 | **Buy (Fund)** | `POST /api/v1/escrows/{id}/buy` | `CREATED` | `FUNDED` | Designated `buyer_id` ONLY | • `request.buyer_id == escrow.buyer_id`<br>• Buyer ledger balance ≥ `escrow.amount`<br>• Submits atomic `Transfer` (Buyer → Vault) |
-| **Hold (Freeze)** | `POST /api/v1/escrows/{id}/hold` | `CREATED` or `FUNDED` | `HELD` | `buyer_id`, `seller_id`, or `arbiter_id` | • Requires non-empty `reason`<br>• Submits `InvokeContractMethod` (`set_hold_status`) on Universal Ledger |
-| **Sell (Release)**| `POST /api/v1/escrows/{id}/sell` | `FUNDED` or `HELD` | `RELEASED` | `buyer_id`, `seller_id`, or `arbiter_id` | • Vault balance ≥ `escrow.amount`<br>• Submits multi-signatory `Transfer` (Vault → Seller) |
-| **Refund** | `POST /api/v1/escrows/{id}/refund` | `FUNDED`, `HELD`, or `DISPUTED` | `REFUNDED` | `seller_id` or `arbiter_id` ONLY | • Buyer cannot self-refund<br>• Vault balance ≥ `escrow.amount`<br>• Submits multi-signatory `Transfer` (Vault → Buyer) |
+| **Deliver** | `POST /api/v1/escrows/{id}/deliver` | `FUNDED` | `DELIVERED` | Delivery actor, seller, buyer, or arbiter | • Records delivery details<br>• Starts `return_period_seconds` timer, default 30 seconds<br>• Sets `return_window_expires_at` |
+| **Auto-Release After Delivery** | Background timer | `DELIVERED` for full return window | `RELEASED` | System timer using arbiter authorization | • Runs only after delivery timer completes<br>• Releases funds only if escrow is still `DELIVERED`<br>• Does not release if escrow moved to `HELD`, `REFUNDED`, or `RELEASED` |
+| **Request Return** | `POST /api/v1/escrows/{id}/request-return` | `DELIVERED` within return window | `HELD` | Designated `buyer_id` ONLY | • Buyer must request before `return_window_expires_at`<br>• Cancels pending auto-release |
+| **Hold (Freeze)** | `POST /api/v1/escrows/{id}/hold` | `CREATED`, `FUNDED`, or `DELIVERED` | `HELD` | `buyer_id`, `seller_id`, or `arbiter_id` | • Requires non-empty `reason`<br>• Submits `InvokeContractMethod` (`set_hold_status`) on Universal Ledger<br>• Cancels pending auto-release if called from `DELIVERED` |
+| **Accept Early** | `POST /api/v1/escrows/{id}/accept-early` | `DELIVERED` | `RELEASED` | Designated `buyer_id` ONLY | • Buyer waives remaining return window<br>• Releases funds to seller immediately |
+| **Sell (Release)**| `POST /api/v1/escrows/{id}/sell` | `DELIVERED` after return window, or `HELD` with buyer/arbiter authorization | `RELEASED` | `buyer_id`, `seller_id`, or `arbiter_id` | • Seller cannot release during active return window<br>• Vault balance ≥ `escrow.amount`<br>• Submits multi-signatory `Transfer` (Vault → Seller) |
+| **Refund** | `POST /api/v1/escrows/{id}/refund` | `FUNDED`, `DELIVERED`, `HELD`, or `DISPUTED` | `REFUNDED` | `seller_id` or `arbiter_id` ONLY | • Buyer cannot self-refund<br>• Vault balance ≥ `escrow.amount`<br>• Cancels pending auto-release<br>• Submits multi-signatory `Transfer` (Vault → Buyer) |
 
 ### ⚠️ HTTP Error & Authorization Matrix
 
 | HTTP Status | Trigger Condition | Underlying Cause |
 | :--- | :--- | :--- |
-| **`400 Bad Request`** | Invalid Lifecycle State | Calling `buy` when state is not `CREATED`, or `sell` when un-funded |
+| **`400 Bad Request`** | Invalid Lifecycle State | Calling `buy` when state is not `CREATED`, `deliver` before funding, or `sell` before delivery |
+| **`400 Bad Request`** | Active Return Window | Seller tries to release funds before the 30-second delivery return window expires |
 | **`400 Bad Request`** | Insufficient Ledger Balance | Payer balance on Universal Ledger is less than requested transaction `amount` |
 | **`403 Forbidden`** | Unauthorized Role | Actor ID does not match allowed role (e.g. non-buyer funding, buyer self-refunding) |
 | **`404 Not Found`** | Resource Missing | Invalid or non-existent `escrow_id` or ledger `account_id` |
@@ -118,21 +128,51 @@ POST /api/v1/escrows/{escrow_id}/buy
 }
 ```
 
-### 3. Put Escrow on Hold
+### 3. Mark Product Delivered
 ```json
-POST /api/v1/escrows/{escrow_id}/hold
+POST /api/v1/escrows/{escrow_id}/deliver
 {
-  "requested_by": "acc_buyer_001",
-  "reason": "Inspection in progress"
+  "delivered_by": "acc_courier_001",
+  "tracking_number": "TRK-889922",
+  "delivery_notes": "Delivered to recipient address"
 }
 ```
 
-### 4. Sell / Release Funds
+After delivery, the escrow status becomes `DELIVERED` and the 30-second return window starts.
+
+### 4. Optional: Buyer Requests Return During Window
+```json
+POST /api/v1/escrows/{escrow_id}/request-return
+{
+  "buyer_id": "acc_buyer_001",
+  "reason": "Item is damaged"
+}
+```
+
+If a return is requested during the window, status becomes `HELD` and the automatic release is cancelled.
+
+### 5. Optional: Buyer Accepts Delivery Early
+```json
+POST /api/v1/escrows/{escrow_id}/accept-early
+{
+  "buyer_id": "acc_buyer_001",
+  "notes": "Product checked and accepted"
+}
+```
+
+This releases funds immediately and changes status to `RELEASED`.
+
+### 6. Automatic Release After 30 Seconds
+
+If the escrow remains `DELIVERED` for the full 30-second return window, the background timer releases vault funds to the seller automatically. The final status becomes `RELEASED`.
+
+Manual release is also allowed after the return window expires:
+
 ```json
 POST /api/v1/escrows/{escrow_id}/sell
 {
-  "requested_by": "acc_buyer_001",
-  "settlement_notes": "Inspection passed. Releasing $500.00 to seller."
+  "requested_by": "acc_seller_001",
+  "settlement_notes": "Return window expired. Releasing funds to seller."
 }
 ```
 
