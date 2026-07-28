@@ -21,6 +21,7 @@ class EscrowService:
         self.ledger_client = ledger_client
         self._escrows: Dict[str, EscrowResponse] = {}
         self._delivery_release_timers: Dict[str, threading.Timer] = {}
+        self._hold_release_timers: Dict[str, threading.Timer] = {}
         self._lock = threading.RLock()
 
     def _schedule_delivery_auto_release(self, escrow_id: str, delay_seconds: int) -> None:
@@ -37,6 +38,23 @@ class EscrowService:
 
     def _cancel_delivery_auto_release(self, escrow_id: str) -> None:
         timer = self._delivery_release_timers.pop(escrow_id, None)
+        if timer:
+            timer.cancel()
+
+    def _schedule_hold_auto_release(self, escrow_id: str, delay_seconds: int) -> None:
+        self._cancel_hold_auto_release(escrow_id)
+
+        timer = threading.Timer(
+            delay_seconds,
+            self._auto_release_held_escrow,
+            args=(escrow_id,)
+        )
+        timer.daemon = True
+        self._hold_release_timers[escrow_id] = timer
+        timer.start()
+
+    def _cancel_hold_auto_release(self, escrow_id: str) -> None:
+        timer = self._hold_release_timers.pop(escrow_id, None)
         if timer:
             timer.cancel()
 
@@ -60,6 +78,32 @@ class EscrowService:
             except Exception as err:
                 log_escrow_event(
                     action="AUTO_RELEASE_FAILED",
+                    title=escrow.title,
+                    escrow_id=escrow_id,
+                    status=escrow.status.value,
+                    details={"error": str(err)}
+                )
+
+    def _auto_release_held_escrow(self, escrow_id: str) -> None:
+        with self._lock:
+            escrow = self._escrows.get(escrow_id)
+            if not escrow or escrow.status != EscrowStatus.HELD:
+                self._hold_release_timers.pop(escrow_id, None)
+                return
+
+            self._hold_release_timers.pop(escrow_id, None)
+
+            try:
+                self.sell_escrow(
+                    escrow_id,
+                    SellEscrowRequest(
+                        requested_by=escrow.arbiter_id,
+                        settlement_notes="Auto-release after 59 seconds in HOLD state without refund"
+                    )
+                )
+            except Exception as err:
+                log_escrow_event(
+                    action="HOLD_AUTO_RELEASE_FAILED",
                     title=escrow.title,
                     escrow_id=escrow_id,
                     status=escrow.status.value,
@@ -202,7 +246,6 @@ class EscrowService:
         escrow.last_transaction_digest = res.transaction_digest_hex
         escrow.ledger_round_id = res.certificate.round_id if res.certificate else escrow.ledger_round_id
         escrow.ledger_history.append(event_log)
-        self._schedule_delivery_auto_release(escrow_id, escrow.return_period_seconds or 30)
 
         # Emit GCP Cloud Log
         log_escrow_event(
@@ -281,6 +324,7 @@ class EscrowService:
         escrow.last_transaction_digest = res.transaction_digest_hex
         escrow.ledger_round_id = res.certificate.round_id if res.certificate else escrow.ledger_round_id
         escrow.ledger_history.append(event_log)
+        self._schedule_delivery_auto_release(escrow_id, escrow.return_period_seconds or 30)
 
         # Emit GCP Cloud Log
         log_escrow_event(
@@ -359,6 +403,7 @@ class EscrowService:
         escrow.ledger_round_id = res.certificate.round_id if res.certificate else escrow.ledger_round_id
         escrow.ledger_history.append(event_log)
         self._cancel_delivery_auto_release(escrow_id)
+        self._schedule_hold_auto_release(escrow_id, escrow.return_period_seconds or 30)
 
         log_escrow_event(
             action="RETURN_REQUESTED",
@@ -452,6 +497,7 @@ class EscrowService:
         escrow.ledger_round_id = res.certificate.round_id if res.certificate else escrow.ledger_round_id
         escrow.ledger_history.append(event_log)
         self._cancel_delivery_auto_release(escrow_id)
+        self._schedule_hold_auto_release(escrow_id, escrow.return_period_seconds or 30)
 
         log_escrow_event(
             action="HOLD_LOCKED",
@@ -552,6 +598,7 @@ class EscrowService:
         escrow.ledger_round_id = res.certificate.round_id if res.certificate else escrow.ledger_round_id
         escrow.ledger_history.append(event_log)
         self._cancel_delivery_auto_release(escrow_id)
+        self._cancel_hold_auto_release(escrow_id)
 
         log_escrow_event(
             action="SELL_RELEASED",
@@ -622,6 +669,7 @@ class EscrowService:
         escrow.ledger_round_id = res.certificate.round_id if res.certificate else escrow.ledger_round_id
         escrow.ledger_history.append(event_log)
         self._cancel_delivery_auto_release(escrow_id)
+        self._cancel_hold_auto_release(escrow_id)
 
         log_escrow_event(
             action="REFUNDED",
