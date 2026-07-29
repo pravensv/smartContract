@@ -1,4 +1,5 @@
 import pytest
+import time
 from fastapi.testclient import TestClient
 from app.main import app
 
@@ -150,6 +151,99 @@ def test_delivery_and_5_day_return_window():
     })
     assert buyer_accept_res.status_code == 200
     assert buyer_accept_res.json()["status"] == "RELEASED"
+
+def test_delivered_escrow_auto_releases_after_return_window():
+    create_res = client.post("/api/v1/escrows", json={
+        "buyer_id": "acc_buyer_001",
+        "seller_id": "acc_seller_001",
+        "amount": 25000,
+        "title": "Auto release after delivery",
+        "return_period_seconds": 1
+    })
+    escrow_id = create_res.json()["escrow_id"]
+    client.post(f"/api/v1/escrows/{escrow_id}/buy", json={"buyer_id": "acc_buyer_001"})
+
+    deliver_res = client.post(f"/api/v1/escrows/{escrow_id}/deliver", json={
+        "delivered_by": "acc_courier_001",
+        "tracking_number": "TRK-AUTO-001"
+    })
+    assert deliver_res.status_code == 200
+    assert deliver_res.json()["status"] == "DELIVERED"
+
+    released = None
+    for _ in range(20):
+        time.sleep(0.2)
+        released = client.get(f"/api/v1/escrows/{escrow_id}").json()
+        if released["status"] == "RELEASED":
+            break
+
+    assert released["status"] == "RELEASED"
+    assert released["ledger_history"][-1]["action"] == "SELL_RELEASED"
+    assert released["ledger_history"][-1]["details"]["requested_by"] == "acc_arbiter_001"
+
+def test_held_escrow_auto_releases_if_not_refunded():
+    create_res = client.post("/api/v1/escrows", json={
+        "buyer_id": "acc_buyer_001",
+        "seller_id": "acc_seller_001",
+        "amount": 26000,
+        "title": "Auto release from hold",
+        "return_period_seconds": 1
+    })
+    escrow_id = create_res.json()["escrow_id"]
+    client.post(f"/api/v1/escrows/{escrow_id}/buy", json={"buyer_id": "acc_buyer_001"})
+    client.post(f"/api/v1/escrows/{escrow_id}/deliver", json={
+        "delivered_by": "acc_courier_001",
+        "tracking_number": "TRK-HOLD-AUTO-001"
+    })
+
+    return_res = client.post(f"/api/v1/escrows/{escrow_id}/request-return", json={
+        "buyer_id": "acc_buyer_001",
+        "reason": "Needs seller review"
+    })
+    assert return_res.status_code == 200
+    assert return_res.json()["status"] == "HELD"
+
+    released = None
+    for _ in range(20):
+        time.sleep(0.2)
+        released = client.get(f"/api/v1/escrows/{escrow_id}").json()
+        if released["status"] == "RELEASED":
+            break
+
+    assert released["status"] == "RELEASED"
+    assert released["ledger_history"][-1]["action"] == "SELL_RELEASED"
+    assert released["ledger_history"][-1]["details"]["requested_by"] == "acc_arbiter_001"
+
+def test_refund_during_held_window_prevents_auto_release():
+    create_res = client.post("/api/v1/escrows", json={
+        "buyer_id": "acc_buyer_001",
+        "seller_id": "acc_seller_001",
+        "amount": 27000,
+        "title": "Refund wins during hold",
+        "return_period_seconds": 1
+    })
+    escrow_id = create_res.json()["escrow_id"]
+    client.post(f"/api/v1/escrows/{escrow_id}/buy", json={"buyer_id": "acc_buyer_001"})
+    client.post(f"/api/v1/escrows/{escrow_id}/deliver", json={
+        "delivered_by": "acc_courier_001",
+        "tracking_number": "TRK-HOLD-REFUND-001"
+    })
+    client.post(f"/api/v1/escrows/{escrow_id}/request-return", json={
+        "buyer_id": "acc_buyer_001",
+        "reason": "Refund requested within hold window"
+    })
+
+    refund_res = client.post(f"/api/v1/escrows/{escrow_id}/refund", json={
+        "requested_by": "acc_arbiter_001",
+        "reason": "Refund approved before hold timer expired"
+    })
+    assert refund_res.status_code == 200
+    assert refund_res.json()["status"] == "REFUNDED"
+
+    time.sleep(1.4)
+    escrow = client.get(f"/api/v1/escrows/{escrow_id}").json()
+    assert escrow["status"] == "REFUNDED"
+    assert escrow["ledger_history"][-1]["action"] == "REFUNDED"
 
 def test_invalid_buyer_cannot_fund():
     create_res = client.post("/api/v1/escrows", json={
