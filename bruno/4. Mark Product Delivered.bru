@@ -1,0 +1,23 @@
+meta {
+  name: 4. Mark Product Delivered
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/api/v1/escrows/{{escrowId}}/deliver
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "delivered_by": "acc_courier_001",
+    "tracking_number": "TRK-987654321",
+    "delivery_notes": "Package delivered to front door with photo proof"
+  }
+}
+
+docs {
+  **Mark Product Delivered**: Delivery boy or courier marks product as delivered. Records delivery timestamp and starts the 30-second return window countdown clock on the Google Cloud Universal Ledger.
+}

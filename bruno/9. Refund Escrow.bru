@@ -1,0 +1,22 @@
+meta {
+  name: 9. Refund Escrow
+  type: http
+  seq: 11
+}
+
+post {
+  url: {{baseUrl}}/api/v1/escrows/{{escrowId}}/refund
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "requested_by": "acc_arbiter_001",
+    "reason": "Item damaged in transit. Refund approved."
+  }
+}
+
+docs {
+  **Refund Escrow**: Returns vault funds back to the Buyer. Authorized by Seller or neutral Arbiter.
+}

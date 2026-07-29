@@ -1,0 +1,15 @@
+meta {
+  name: 12. Query Transaction State
+  type: http
+  seq: 14
+}
+
+get {
+  url: {{baseUrl}}/api/v1/ledger/transactions/{{transactionDigest}}
+  body: none
+  auth: none
+}
+
+docs {
+  **Query Transaction State**: Queries cryptographic consensus certificate and transaction state on Google Cloud Universal Ledger (`QueryTransactionState`).
+}

@@ -5,8 +5,10 @@ from pydantic import BaseModel, Field
 class EscrowStatus(str, Enum):
     CREATED = "CREATED"
     FUNDED = "FUNDED"
+    IN_TRANSIT = "IN_TRANSIT"  # Package in transit / shipped by merchant
+    DELIVERED = "DELIVERED"   # Product delivered by courier, return window active
     HELD = "HELD"
-    RELEASED = "RELEASED"  # Completed Sell operation
+    RELEASED = "RELEASED"     # Completed Sell operation (Funds released to merchant)
     REFUNDED = "REFUNDED"
     DISPUTED = "DISPUTED"
 
@@ -18,17 +20,37 @@ class CreateEscrowRequest(BaseModel):
     currency: str = Field("USD", description="3-letter currency code (ISO 4217)")
     title: str = Field(..., description="Title of item or agreement", json_schema_extra={"example": "MacBook Pro Purchase Escrow"})
     description: Optional[str] = Field("", description="Additional terms or contract details")
+    return_period_seconds: int = Field(30, description="Return period window in seconds (default 60 seconds)")
+    return_period_days: Optional[int] = Field(None, description="Optional return period window in days")
 
 class BuyEscrowRequest(BaseModel):
     buyer_id: str = Field(..., description="Ledger account ID of the buyer funding the escrow")
     payment_notes: Optional[str] = Field(None, description="Optional payment memo or purchase order reference")
 
+class TransitEscrowRequest(BaseModel):
+    updated_by: str = Field(..., description="Account ID of seller/courier marking item in transit")
+    tracking_number: Optional[str] = Field(None, description="Package tracking number (e.g. TRK-88902)")
+    transit_notes: Optional[str] = Field("Package dispatched and in transit to buyer", description="Transit notes")
+
+class DeliverEscrowRequest(BaseModel):
+    delivered_by: str = Field(..., description="Account ID of delivery agent / courier / seller marking product delivered")
+    tracking_number: Optional[str] = Field(None, description="Package tracking number (e.g. TRK-88902)")
+    delivery_notes: Optional[str] = Field("Delivered to recipient address", description="Proof of delivery or courier notes")
+
+class RequestReturnRequest(BaseModel):
+    buyer_id: str = Field(..., description="Buyer account ID requesting product return during 5-day window")
+    reason: str = Field(..., description="Reason for product return (e.g. Defective item, wrong size, item not as described)")
+
+class AcceptDeliveryEarlyRequest(BaseModel):
+    buyer_id: str = Field(..., description="Buyer account ID approving early settlement (waiving remaining 5-day return window)")
+    notes: Optional[str] = Field(None, description="Buyer feedback or approval notes")
+
 class HoldEscrowRequest(BaseModel):
     requested_by: str = Field(..., description="Account ID requesting to put funds on hold (buyer, seller, or arbiter)")
-    reason: str = Field(..., description="Reason for holding escrow (e.g. Inspection pending, item damaged in transit, verification required)")
+    reason: str = Field(..., description="Reason for holding escrow (e.g. Inspection pending, item damaged in transit)")
 
 class SellEscrowRequest(BaseModel):
-    requested_by: str = Field(..., description="Account ID approving/triggering the release of funds to seller (buyer or arbiter)")
+    requested_by: str = Field(..., description="Account ID approving/triggering the release of funds to seller (seller, buyer, or arbiter)")
     settlement_notes: Optional[str] = Field(None, description="Optional fulfillment/delivery reference")
 
 class RefundEscrowRequest(BaseModel):
@@ -55,6 +77,11 @@ class EscrowResponse(BaseModel):
     description: str
     created_at: float
     updated_at: float
+    delivered_at: Optional[float] = None
+    return_period_seconds: int = 30
+    return_period_days: Optional[int] = None
+    return_window_expires_at: Optional[float] = None
+    delivery_tracking_info: Optional[str] = None
     hold_reason: Optional[str] = None
     last_transaction_digest: Optional[str] = None
     ledger_round_id: Optional[int] = None

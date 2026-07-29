@@ -1,0 +1,13 @@
+# Ignore virtual environments, git repositories, and build caches
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.git/
+.gitignore
+.ds_store
+*.log
+.gemini/

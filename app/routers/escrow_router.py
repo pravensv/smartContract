@@ -2,8 +2,9 @@ import logging
 from typing import List
 from fastapi import APIRouter, Depends, status
 from app.models.escrow import (
-    BuyEscrowRequest, CreateEscrowRequest, EscrowResponse, HoldEscrowRequest,
-    RefundEscrowRequest, SellEscrowRequest
+    AcceptDeliveryEarlyRequest, BuyEscrowRequest, CreateEscrowRequest,
+    DeliverEscrowRequest, EscrowResponse, HoldEscrowRequest,
+    RefundEscrowRequest, RequestReturnRequest, SellEscrowRequest, TransitEscrowRequest
 )
 from app.services.escrow_service import EscrowService
 
@@ -28,10 +29,11 @@ def create_escrow(
 ) -> EscrowResponse:
     print("\n" + "="*80)
     print(f"🚀 [POST /api/v1/escrows] CREATING ESCROW")
-    print(f"   Title   : {request.title}")
-    print(f"   Buyer   : {request.buyer_id}")
-    print(f"   Seller  : {request.seller_id}")
-    print(f"   Amount  : {request.amount} {request.currency}")
+    print(f"   Title        : {request.title}")
+    print(f"   Buyer        : {request.buyer_id}")
+    print(f"   Seller       : {request.seller_id}")
+    print(f"   Amount       : {request.amount} {request.currency}")
+    print(f"   Return Period: {getattr(request, 'return_period_seconds', 30)} Seconds")
     print("="*80)
     return service.create_escrow(request)
 
@@ -61,6 +63,60 @@ def buy_escrow(
     print("="*80)
     return service.buy_escrow(escrow_id, request)
 
+@router.post("/{escrow_id}/transit", response_model=EscrowResponse, summary="Mark Product as In Transit (Merchant / Courier)")
+def transit_escrow(
+    escrow_id: str,
+    request: TransitEscrowRequest,
+    service: EscrowService = Depends(get_escrow_service)
+) -> EscrowResponse:
+    print("\n" + "="*80)
+    print(f"🚚 [POST /api/v1/escrows/{escrow_id}/transit] MARKING PRODUCT IN TRANSIT")
+    print(f"   Updated By      : {request.updated_by}")
+    print(f"   Tracking Number : {request.tracking_number}")
+    print(f"   Transit Notes   : {request.transit_notes}")
+    print("="*80)
+    return service.transit_escrow(escrow_id, request)
+
+@router.post("/{escrow_id}/deliver", response_model=EscrowResponse, summary="Mark Product as Delivered (Delivery Boy / Courier)")
+def deliver_escrow(
+    escrow_id: str,
+    request: DeliverEscrowRequest,
+    service: EscrowService = Depends(get_escrow_service)
+) -> EscrowResponse:
+    print("\n" + "="*80)
+    print(f"📦 [POST /api/v1/escrows/{escrow_id}/deliver] MARKING PRODUCT DELIVERED")
+    print(f"   Delivered By    : {request.delivered_by}")
+    print(f"   Tracking Number : {request.tracking_number}")
+    print(f"   Courier Notes   : {request.delivery_notes}")
+    print("="*80)
+    return service.deliver_escrow(escrow_id, request)
+
+@router.post("/{escrow_id}/request-return", response_model=EscrowResponse, summary="Buyer Request Product Return (Within 5-day window)")
+def request_return(
+    escrow_id: str,
+    request: RequestReturnRequest,
+    service: EscrowService = Depends(get_escrow_service)
+) -> EscrowResponse:
+    print("\n" + "="*80)
+    print(f"↩️ [POST /api/v1/escrows/{escrow_id}/request-return] REQUESTING PRODUCT RETURN")
+    print(f"   Buyer   : {request.buyer_id}")
+    print(f"   Reason  : {request.reason}")
+    print("="*80)
+    return service.request_return(escrow_id, request)
+
+@router.post("/{escrow_id}/accept-early", response_model=EscrowResponse, summary="Buyer Accept Delivery Early (Waive return period)")
+def accept_delivery_early(
+    escrow_id: str,
+    request: AcceptDeliveryEarlyRequest,
+    service: EscrowService = Depends(get_escrow_service)
+) -> EscrowResponse:
+    print("\n" + "="*80)
+    print(f"✨ [POST /api/v1/escrows/{escrow_id}/accept-early] ACCEPTING DELIVERY EARLY")
+    print(f"   Buyer   : {request.buyer_id}")
+    print(f"   Notes   : {request.notes}")
+    print("="*80)
+    return service.accept_delivery_early(escrow_id, request)
+
 @router.post("/{escrow_id}/hold", response_model=EscrowResponse, summary="Put Escrow on Hold")
 def hold_escrow(
     escrow_id: str,
@@ -74,7 +130,7 @@ def hold_escrow(
     print("="*80)
     return service.hold_escrow(escrow_id, request)
 
-@router.post("/{escrow_id}/sell", response_model=EscrowResponse, summary="Sell / Release Escrow to Seller")
+@router.post("/{escrow_id}/sell", response_model=EscrowResponse, summary="Sell / Release Escrow to Seller (Merchant)")
 def sell_escrow(
     escrow_id: str,
     request: SellEscrowRequest,
@@ -94,7 +150,7 @@ def refund_escrow(
     service: EscrowService = Depends(get_escrow_service)
 ) -> EscrowResponse:
     print("\n" + "="*80)
-    print(f"↩️ [POST /api/v1/escrows/{escrow_id}/refund] REFUNDING ESCROW TO BUYER")
+    print(f"💸 [POST /api/v1/escrows/{escrow_id}/refund] REFUNDING ESCROW TO BUYER")
     print(f"   By      : {request.requested_by}")
     print(f"   Reason  : {request.reason}")
     print("="*80)

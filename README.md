@@ -1,102 +1,112 @@
 # Google Cloud Universal Ledger Escrow API
 
-Enterprise RESTful API service built with FastAPI and integrated with Google Cloud Universal Ledger (`google.cloud.universalledger.v1`). Enables secure multi-party Escrow transactions featuring **Create Escrow**, **Buy (Fund)**, **Hold (Freeze/Inspect)**, and **Sell (Release/Settle)** operations.
+Enterprise RESTful API service built with FastAPI and integrated with Google Cloud Universal Ledger (`google.cloud.universalledger.v1`). It supports escrow flows for create, fund, delivery, return/hold handling, refund, and automatic release.
 
 ---
 
-## 🚀 Key Features
+## Key Features
 
-1. **Complete Escrow Lifecycle**:
-   - **Create Escrow**: Initializes contract terms, assigns buyer/seller/arbiter accounts, and registers an Escrow Vault Account on Google Cloud Universal Ledger.
-   - **Buy (Fund)**: Buyer transfers currency tokens into the Escrow Vault on Universal Ledger using atomic `Transfer` transactions.
-   - **Hold**: Locks escrow during inspection, verification, or dispute using Universal Ledger contract state updates (`InvokeContractMethod`).
-   - **Sell (Release)**: Releases locked vault funds directly to the Seller account on Universal Ledger (`Transfer`).
-   - **Refund**: Resolves disputes by returning vault funds back to the Buyer.
+1. **Complete Escrow Lifecycle**
+   - **Create Escrow**: Initializes buyer, seller, arbiter, amount, and vault account.
+   - **Buy / Fund**: Transfers buyer funds into the escrow vault.
+   - **Deliver**: Marks the product as delivered and starts the delivery return window.
+   - **Auto-Release After Delivery**: If escrow remains `DELIVERED` after the return window, funds release to the seller automatically.
+   - **Return / Hold**: Moves escrow to `HELD` for return, inspection, verification, or dispute review.
+   - **Auto-Release From Hold**: If escrow remains `HELD` for 59 seconds and no refund is called, funds release to the seller automatically.
+   - **Refund**: If refund is called while escrow is held, funds are refunded immediately, regardless of the 30-second held timer.
 
-2. **Google Cloud Universal Ledger (`google.cloud.universalledger.v1`) Integration**:
-   - Built with Protobuf-compatible schema structures (`ClientTransaction`, `Transfer`, `CreateContract`, `InvokeContractMethod`, `QueryAccount`, `QueryTransactionState`).
-   - Supports both real GCP Universal Ledger endpoints and a local ledger simulator for testing and development.
-   - Audit history with cryptographic transaction digests and consensus execution round certificates.
-
----
-
-## 🛠️ Installation & Setup
-
-1. **Clone & Setup Virtual Environment**:
-   ```bash
-   python3 -m venv venv
-   source venv/bin/activate
-   pip install -r requirements.txt
-   ```
-
-2. **Run API Server**:
-   ```bash
-   uvicorn app.main:app --reload --port 8000
-   ```
-   Access Interactive OpenAPI Documentation at: **http://localhost:8000/docs**
-
-3. **Run Test Suite**:
-   ```bash
-   pytest -v
-   ```
-
-4. **Run End-to-End Demo Script**:
-   ```bash
-   python demo.py
-   ```
+2. **Google Cloud Universal Ledger Integration**
+   - Uses ledger-style transaction objects such as `ClientTransaction`, `Transfer`, `InvokeContractMethod`, `QueryAccount`, and `QueryTransactionState`.
+   - Supports local fallback behavior for testing and development.
+   - Keeps audit history with transaction digests and ledger event logs.
 
 ---
 
-## 📡 API Reference
+## Installation & Setup
+
+1. Create and activate the virtual environment:
+
+```powershell
+cd C:\Users\Akshata\IdeaProjects\smartContract
+python -m venv venv
+.\venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+2. Run the API server:
+
+```powershell
+.\venv\Scripts\python.exe -m uvicorn app.main:app --reload --port 8000
+```
+
+Open the API docs:
+
+```text
+http://localhost:8000/docs
+```
+
+3. Run tests:
+
+```powershell
+.\venv\Scripts\python.exe -m pytest -q
+```
+
+4. Run the demo:
+
+```powershell
+.\venv\Scripts\python.exe demo.py
+```
+
+---
+
+## API Reference
 
 ### Escrow Endpoints
 
 | Method | Endpoint | Description |
 | :--- | :--- | :--- |
-| `POST` | `/api/v1/escrows` | Create a new Escrow agreement and Vault account on Universal Ledger |
-| `GET` | `/api/v1/escrows` | List all escrows and their statuses |
-| `GET` | `/api/v1/escrows/{escrow_id}` | Get detailed Escrow state and ledger audit history |
-| `POST` | `/api/v1/escrows/{escrow_id}/buy` | **Buy / Fund Escrow**: Buyer transfers funds to Escrow Vault |
-| `POST` | `/api/v1/escrows/{escrow_id}/hold` | **Hold Escrow**: Lock escrow state during inspection |
-| `POST` | `/api/v1/escrows/{escrow_id}/sell` | **Sell / Release**: Complete sale by transferring funds to Seller |
-| `POST` | `/api/v1/escrows/{escrow_id}/refund` | Refund vault funds to Buyer |
+| `POST` | `/api/v1/escrows` | Create a new escrow and vault account |
+| `GET` | `/api/v1/escrows` | List all escrows |
+| `GET` | `/api/v1/escrows/{escrow_id}` | Get escrow details and audit history |
+| `POST` | `/api/v1/escrows/{escrow_id}/buy` | Buyer funds the escrow vault |
+| `POST` | `/api/v1/escrows/{escrow_id}/deliver` | Mark product delivered and start return timer |
+| `POST` | `/api/v1/escrows/{escrow_id}/request-return` | Buyer requests return during delivery return window |
+| `POST` | `/api/v1/escrows/{escrow_id}/accept-early` | Buyer accepts delivery early and releases funds |
+| `POST` | `/api/v1/escrows/{escrow_id}/hold` | Put escrow on hold |
+| `POST` | `/api/v1/escrows/{escrow_id}/sell` | Release funds to seller |
+| `POST` | `/api/v1/escrows/{escrow_id}/refund` | Refund funds to buyer |
 
----
-
-## 📋 State Transitions & Operational Conditions
-
-| Operation | HTTP Endpoint | Required Prerequisite State | Resulting State | Allowed Actor(s) (`requested_by`) | Key Validation Rules & Universal Ledger Actions |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **Create Escrow** | `POST /api/v1/escrows` | *None* (Initialization) | `CREATED` | Any Client Caller | • `amount > 0`<br>• Assigns `buyer_id`, `seller_id`, and `arbiter_id`<br>• Registers Escrow Vault Account (`acc_vault_<id>`) on Universal Ledger |
-| **Buy (Fund)** | `POST /api/v1/escrows/{id}/buy` | `CREATED` | `FUNDED` | Designated `buyer_id` ONLY | • `request.buyer_id == escrow.buyer_id`<br>• Buyer ledger balance ≥ `escrow.amount`<br>• Submits atomic `Transfer` (Buyer → Vault) |
-| **Hold (Freeze)** | `POST /api/v1/escrows/{id}/hold` | `CREATED` or `FUNDED` | `HELD` | `buyer_id`, `seller_id`, or `arbiter_id` | • Requires non-empty `reason`<br>• Submits `InvokeContractMethod` (`set_hold_status`) on Universal Ledger |
-| **Sell (Release)**| `POST /api/v1/escrows/{id}/sell` | `FUNDED` or `HELD` | `RELEASED` | `buyer_id`, `seller_id`, or `arbiter_id` | • Vault balance ≥ `escrow.amount`<br>• Submits multi-signatory `Transfer` (Vault → Seller) |
-| **Refund** | `POST /api/v1/escrows/{id}/refund` | `FUNDED`, `HELD`, or `DISPUTED` | `REFUNDED` | `seller_id` or `arbiter_id` ONLY | • Buyer cannot self-refund<br>• Vault balance ≥ `escrow.amount`<br>• Submits multi-signatory `Transfer` (Vault → Buyer) |
-
-### ⚠️ HTTP Error & Authorization Matrix
-
-| HTTP Status | Trigger Condition | Underlying Cause |
-| :--- | :--- | :--- |
-| **`400 Bad Request`** | Invalid Lifecycle State | Calling `buy` when state is not `CREATED`, or `sell` when un-funded |
-| **`400 Bad Request`** | Insufficient Ledger Balance | Payer balance on Universal Ledger is less than requested transaction `amount` |
-| **`403 Forbidden`** | Unauthorized Role | Actor ID does not match allowed role (e.g. non-buyer funding, buyer self-refunding) |
-| **`404 Not Found`** | Resource Missing | Invalid or non-existent `escrow_id` or ledger `account_id` |
-
----
-
-### Universal Ledger Low-Level Introspection
+### Ledger Endpoints
 
 | Method | Endpoint | Description |
 | :--- | :--- | :--- |
-| `GET` | `/api/v1/ledger/accounts/{account_id}` | Query account balance, roles, sequence number, and round ID |
-| `GET` | `/api/v1/ledger/transactions/{digest_hex}` | Query transaction status and round certificates |
-| `GET` | `/api/v1/ledger/endpoints` | List Google Cloud Universal Ledger endpoints |
+| `GET` | `/api/v1/ledger/accounts/{account_id}` | Query account balance and ledger account details |
+| `GET` | `/api/v1/ledger/transactions/{digest_hex}` | Query transaction state |
+| `GET` | `/api/v1/ledger/endpoints` | List configured ledger endpoints |
 
 ---
 
-## 💡 Example Escrow Flow
+## State Transitions
+
+| Operation | Endpoint | From State | To State | Who Can Call | Rules                                                                                                                    |
+| :--- | :--- | :--- | :--- | :--- |:-------------------------------------------------------------------------------------------------------------------------|
+| Create Escrow | `POST /api/v1/escrows` | None | `CREATED` | Any caller | Amount must be greater than 0. Creates vault account.                                                                    |
+| Buy / Fund | `POST /api/v1/escrows/{id}/buy` | `CREATED` | `FUNDED` | Buyer only | Buyer transfers funds into vault.                                                                                        |
+| Deliver | `POST /api/v1/escrows/{id}/deliver` | `FUNDED` | `DELIVERED` | Delivery actor, seller, buyer, or arbiter | Starts `return_period_seconds`, default 59 seconds.                                                                      |
+| Auto-Release After Delivery | Background timer | `DELIVERED` | `RELEASED` | System timer using arbiter authorization | Runs only if escrow is still `DELIVERED` when the delivery return window completes.                                      |
+| Request Return | `POST /api/v1/escrows/{id}/request-return` | `DELIVERED` | `HELD` | Buyer only | Must be called before the delivery return window expires. Cancels delivery auto-release and starts the held-state timer. |
+| Hold | `POST /api/v1/escrows/{id}/hold` | `CREATED`, `FUNDED`, or `DELIVERED` | `HELD` | Buyer, seller, or arbiter | Cancels delivery auto-release if active and starts the held-state timer.                                                 |
+| Auto-Release From Hold | Background timer | `HELD` | `RELEASED` | System timer using arbiter authorization | If no refund is called within 59 seconds of entering `HELD`, funds release to seller.                                    |
+| Refund | `POST /api/v1/escrows/{id}/refund` | `FUNDED`, `DELIVERED`, `HELD`, or `DISPUTED` | `REFUNDED` | Seller or arbiter | Refund happens immediately. If escrow is `HELD`, refund wins even if the 30-second timer has not completed.              |
+| Accept Early | `POST /api/v1/escrows/{id}/accept-early` | `DELIVERED` | `RELEASED` | Buyer only | Buyer waives the remaining delivery return window.                                                                       |
+| Sell / Release | `POST /api/v1/escrows/{id}/sell` | `DELIVERED` after return window, or `HELD` with buyer/arbiter authorization | `RELEASED` | Buyer, seller, or arbiter | Seller cannot release during the active delivery return window.                                                          |
+
+---
+
+## Example Flow
 
 ### 1. Create Escrow
+
 ```json
 POST /api/v1/escrows
 {
@@ -105,11 +115,13 @@ POST /api/v1/escrows
   "arbiter_id": "acc_arbiter_001",
   "amount": 50000,
   "currency": "USD",
-  "title": "MacBook Pro Purchase Escrow"
+  "title": "MacBook Pro Purchase Escrow",
+  "return_period_seconds": 30
 }
 ```
 
-### 2. Buy / Fund Escrow
+### 2. Buyer Funds Escrow
+
 ```json
 POST /api/v1/escrows/{escrow_id}/buy
 {
@@ -118,45 +130,74 @@ POST /api/v1/escrows/{escrow_id}/buy
 }
 ```
 
-### 3. Put Escrow on Hold
+### 3. Product Is Delivered
+
 ```json
-POST /api/v1/escrows/{escrow_id}/hold
+POST /api/v1/escrows/{escrow_id}/deliver
 {
-  "requested_by": "acc_buyer_001",
-  "reason": "Inspection in progress"
+  "delivered_by": "acc_courier_001",
+  "tracking_number": "TRK-889922",
+  "delivery_notes": "Delivered to recipient address"
 }
 ```
 
-### 4. Sell / Release Funds
+Status becomes `DELIVERED`. The delivery return timer starts.
+
+### 4A. No Return Is Requested
+
+If escrow stays `DELIVERED` until the delivery return timer completes, funds automatically release to the seller and status becomes `RELEASED`.
+
+### 4B. Buyer Requests Return
+
 ```json
-POST /api/v1/escrows/{escrow_id}/sell
+POST /api/v1/escrows/{escrow_id}/request-return
 {
-  "requested_by": "acc_buyer_001",
-  "settlement_notes": "Inspection passed. Releasing $500.00 to seller."
+  "buyer_id": "acc_buyer_001",
+  "reason": "Item is damaged"
 }
 ```
+
+Status becomes `HELD`. The delivery auto-release is cancelled. A new 30-second held-state timer starts.
+
+### 5A. Refund Is Approved While Held
+
+```json
+POST /api/v1/escrows/{escrow_id}/refund
+{
+  "requested_by": "acc_arbiter_001",
+  "reason": "Refund approved after review"
+}
+```
+
+Funds are refunded to the buyer immediately and status becomes `REFUNDED`. This cancels the held-state timer.
+
+### 5B. No Refund While Held
+
+If escrow remains `HELD` for 59 seconds and no refund is called, funds automatically release to the seller and status becomes `RELEASED`.
 
 ---
 
-## 📁 Repository Structure
+## Repository Structure
 
+```text
+app/
+  main.py
+  config.py
+  ledger/
+  models/
+  routers/
+  services/
+contracts/
+tests/
+demo.py
+requirements.txt
+README.md
 ```
-├── app/
-│   ├── main.py              # FastAPI application entrypoint & middleware
-│   ├── config.py            # Application settings (GCP project, endpoint, mock mode)
-│   ├── models/
-│   │   └── escrow.py        # Pydantic domain models & request/response schemas
-│   ├── ledger/
-│   │   ├── schemas.py       # google.cloud.universalledger.v1 Protobuf data models
-│   │   └── client.py        # Universal Ledger Service client & state simulator
-│   ├── services/
-│   │   └── escrow_service.py # Escrow domain logic and Universal Ledger transaction generator
-│   └── routers/
-│       ├── escrow_router.py # REST endpoints for Escrow operations
-│       └── ledger_router.py # Introspection endpoints for Universal Ledger
-├── tests/
-│   └── test_escrow_api.py   # Pytest suite covering full Create->Buy->Hold->Sell lifecycle
-├── demo.py                  # Executable Python demonstration script
-├── requirements.txt         # Dependencies
-└── README.md                # Project documentation
-```
+
+
+
+ # Activate virtual environment
+source venv/bin/activate
+
+# Start the API server on port 8000
+uvicorn app.main:app --reload --port 8000
