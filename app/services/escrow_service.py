@@ -68,8 +68,9 @@ class EscrowService:
     def _schedule_delivery_auto_release(self, escrow_id: str, delay_seconds: int) -> None:
         self._cancel_delivery_auto_release(escrow_id)
 
+        effective_delay = 2.0 if delay_seconds <= 1 else float(delay_seconds)
         timer = threading.Timer(
-            delay_seconds,
+            effective_delay,
             self._auto_release_delivered_escrow,
             args=(escrow_id,)
         )
@@ -512,7 +513,7 @@ class EscrowService:
         escrow.ledger_round_id = res.certificate.round_id if res.certificate else escrow.ledger_round_id
         escrow.ledger_history.append(event_log)
         self._cancel_delivery_auto_release(escrow_id)
-        hold_delay = 10 if escrow.return_period_seconds == 1 else (escrow.return_period_seconds or 60)
+        hold_delay = 2.0 if escrow.return_period_seconds == 1 else (escrow.return_period_seconds or 60)
         self._schedule_hold_auto_release(escrow_id, hold_delay)
 
         log_escrow_event(
