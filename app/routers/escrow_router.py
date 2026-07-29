@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, status
 from app.models.escrow import (
     AcceptDeliveryEarlyRequest, BuyEscrowRequest, CreateEscrowRequest,
     DeliverEscrowRequest, EscrowResponse, HoldEscrowRequest,
-    RefundEscrowRequest, RequestReturnRequest, SellEscrowRequest
+    RefundEscrowRequest, RequestReturnRequest, SellEscrowRequest, TransitEscrowRequest
 )
 from app.services.escrow_service import EscrowService
 
@@ -62,6 +62,20 @@ def buy_escrow(
     print(f"   Notes   : {request.payment_notes}")
     print("="*80)
     return service.buy_escrow(escrow_id, request)
+
+@router.post("/{escrow_id}/transit", response_model=EscrowResponse, summary="Mark Product as In Transit (Merchant / Courier)")
+def transit_escrow(
+    escrow_id: str,
+    request: TransitEscrowRequest,
+    service: EscrowService = Depends(get_escrow_service)
+) -> EscrowResponse:
+    print("\n" + "="*80)
+    print(f"🚚 [POST /api/v1/escrows/{escrow_id}/transit] MARKING PRODUCT IN TRANSIT")
+    print(f"   Updated By      : {request.updated_by}")
+    print(f"   Tracking Number : {request.tracking_number}")
+    print(f"   Transit Notes   : {request.transit_notes}")
+    print("="*80)
+    return service.transit_escrow(escrow_id, request)
 
 @router.post("/{escrow_id}/deliver", response_model=EscrowResponse, summary="Mark Product as Delivered (Delivery Boy / Courier)")
 def deliver_escrow(

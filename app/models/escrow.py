@@ -5,9 +5,10 @@ from pydantic import BaseModel, Field
 class EscrowStatus(str, Enum):
     CREATED = "CREATED"
     FUNDED = "FUNDED"
-    DELIVERED = "DELIVERED"  # Product delivered by courier, 5-day return window active
+    IN_TRANSIT = "IN_TRANSIT"  # Package in transit / shipped by merchant
+    DELIVERED = "DELIVERED"   # Product delivered by courier, return window active
     HELD = "HELD"
-    RELEASED = "RELEASED"    # Completed Sell operation (Funds released to merchant)
+    RELEASED = "RELEASED"     # Completed Sell operation (Funds released to merchant)
     REFUNDED = "REFUNDED"
     DISPUTED = "DISPUTED"
 
@@ -19,12 +20,17 @@ class CreateEscrowRequest(BaseModel):
     currency: str = Field("USD", description="3-letter currency code (ISO 4217)")
     title: str = Field(..., description="Title of item or agreement", json_schema_extra={"example": "MacBook Pro Purchase Escrow"})
     description: Optional[str] = Field("", description="Additional terms or contract details")
-    return_period_seconds: int = Field(30, description="Return period window in seconds (default 30 seconds)")
+    return_period_seconds: int = Field(30, description="Return period window in seconds (default 60 seconds)")
     return_period_days: Optional[int] = Field(None, description="Optional return period window in days")
 
 class BuyEscrowRequest(BaseModel):
     buyer_id: str = Field(..., description="Ledger account ID of the buyer funding the escrow")
     payment_notes: Optional[str] = Field(None, description="Optional payment memo or purchase order reference")
+
+class TransitEscrowRequest(BaseModel):
+    updated_by: str = Field(..., description="Account ID of seller/courier marking item in transit")
+    tracking_number: Optional[str] = Field(None, description="Package tracking number (e.g. TRK-88902)")
+    transit_notes: Optional[str] = Field("Package dispatched and in transit to buyer", description="Transit notes")
 
 class DeliverEscrowRequest(BaseModel):
     delivered_by: str = Field(..., description="Account ID of delivery agent / courier / seller marking product delivered")

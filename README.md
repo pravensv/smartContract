@@ -160,3 +160,11 @@ POST /api/v1/escrows/{escrow_id}/sell
 ├── requirements.txt         # Dependencies
 └── README.md                # Project documentation
 ```
+
+
+
+ # Activate virtual environment
+source venv/bin/activate
+
+# Start the API server on port 8000
+uvicorn app.main:app --reload --port 8000

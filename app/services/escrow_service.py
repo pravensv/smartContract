@@ -12,7 +12,7 @@ from app.ledger.schemas import (
 from app.models.escrow import (
     AcceptDeliveryEarlyRequest, BuyEscrowRequest, CreateEscrowRequest,
     DeliverEscrowRequest, EscrowResponse, EscrowStatus, HoldEscrowRequest,
-    LedgerEventLog, RefundEscrowRequest, RequestReturnRequest, SellEscrowRequest
+    LedgerEventLog, RefundEscrowRequest, RequestReturnRequest, SellEscrowRequest, TransitEscrowRequest
 )
 
 class EscrowService:
@@ -168,13 +168,81 @@ class EscrowService:
 
         return escrow
 
-    def deliver_escrow(self, escrow_id: str, request: DeliverEscrowRequest) -> EscrowResponse:
+    def transit_escrow(self, escrow_id: str, request: TransitEscrowRequest) -> EscrowResponse:
         escrow = self.get_escrow(escrow_id)
 
         if escrow.status != EscrowStatus.FUNDED:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Cannot mark escrow as delivered in '{escrow.status}' state. Must be in 'FUNDED' state."
+                detail=f"Cannot mark escrow as IN_TRANSIT in '{escrow.status}' state. Must be in 'FUNDED' state."
+            )
+
+        now = time.time()
+
+        tx = ClientTransaction(
+            sender_id=request.updated_by,
+            sequence_number=3,
+            chained_unit=False,
+            invoke_contract_method_transaction=InvokeContractMethod(
+                contract_id=escrow.vault_account_id,
+                method_name="mark_in_transit",
+                method_arguments={
+                    "updated_by": request.updated_by,
+                    "tracking_number": request.tracking_number or "",
+                    "transit_at": now
+                }
+            )
+        )
+
+        res = self.ledger_client.submit_transaction(
+            SubmitTransactionRequest(
+                endpoint=self.ledger_client.endpoint_name,
+                transaction=SignedTransaction(
+                    client_transaction=tx,
+                    signature=f"sig_transit_{request.updated_by}"
+                )
+            )
+        )
+
+        event_log = LedgerEventLog(
+            action="PRODUCT_IN_TRANSIT",
+            transaction_digest_hex=res.transaction_digest_hex,
+            round_id=res.certificate.round_id if res.certificate else 102,
+            timestamp=now,
+            details={
+                "updated_by": request.updated_by,
+                "tracking_number": request.tracking_number or "N/A",
+                "notes": request.transit_notes or ""
+            }
+        )
+
+        escrow.status = EscrowStatus.IN_TRANSIT
+        escrow.delivery_tracking_info = request.tracking_number
+        escrow.updated_at = now
+        escrow.last_transaction_digest = res.transaction_digest_hex
+        escrow.ledger_round_id = res.certificate.round_id if res.certificate else escrow.ledger_round_id
+        escrow.ledger_history.append(event_log)
+
+        log_escrow_event(
+            action="PRODUCT_IN_TRANSIT",
+            title=escrow.title,
+            escrow_id=escrow_id,
+            status="IN_TRANSIT",
+            details={
+                "updated_by": request.updated_by,
+                "tracking": request.tracking_number
+            }
+        )
+
+        return escrow
+
+    def deliver_escrow(self, escrow_id: str, request: DeliverEscrowRequest) -> EscrowResponse:
+        escrow = self.get_escrow(escrow_id)
+
+        if escrow.status not in [EscrowStatus.FUNDED, EscrowStatus.IN_TRANSIT]:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Cannot mark escrow as delivered in '{escrow.status}' state. Must be in 'FUNDED' or 'IN_TRANSIT' state."
             )
 
         valid_actors = {escrow.seller_id, escrow.buyer_id, escrow.arbiter_id, request.delivered_by}
@@ -305,18 +373,18 @@ class EscrowService:
             details={"buyer_id": request.buyer_id, "reason": request.reason}
         )
 
-        escrow.status = EscrowStatus.HELD
-        escrow.hold_reason = f"Return Requested: {request.reason}"
+        escrow.status = EscrowStatus.REFUNDED
+        escrow.hold_reason = f"Product Returned & Money Refunded: {request.reason}"
         escrow.updated_at = now
         escrow.last_transaction_digest = res.transaction_digest_hex
         escrow.ledger_round_id = res.certificate.round_id if res.certificate else escrow.ledger_round_id
         escrow.ledger_history.append(event_log)
 
         log_escrow_event(
-            action="RETURN_REQUESTED",
+            action="RETURN_REFUNDED",
             title=escrow.title,
             escrow_id=escrow_id,
-            status="HELD",
+            status="REFUNDED",
             details={"buyer_id": request.buyer_id, "reason": request.reason}
         )
 
